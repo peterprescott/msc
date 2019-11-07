@@ -1,0 +1,385 @@
+---
+output:
+  pdf_document:
+    keep_tex: no
+    latex_engine: pdflatex
+    template: ..\latex-ms.tex
+title: "Appendix: Code Chunks"
+fontfamily: mathpazo
+fontsize: 11pt
+geometry: margin=1in
+---
+
+
+```{r, eval=FALSE, "setup", echo=FALSE, include=FALSE, results='hide'}
+
+library(dplyr, warn.conflicts=F, quietly=T)
+library(ENVS450, warn.conflicts=F, quietly=T)
+library(knitr, warn.conflicts=F, quietly=T)
+library(kableExtra, warn.conflicts=F, quietly=T)
+load.package("ggplot2")
+load.package("scales")
+load.package("car")
+
+```
+
+# Examining the Data
+```{r, eval=FALSE, "explore_data", echo=T, results='hide'}
+# load data
+data_filename <- '../data/QLFS 2012 Q1 Adults (Assignment 1).RData'
+load(data_filename)
+# explore the data
+dim(qlfs) # 84692 x 28
+names(meta.data)
+unique(qlfs$AgeGroup)
+head(qlfs)
+tail(qlfs)
+summary(qlfs)
+summary(qlfs$Religion)
+summary(qlfs$Age)
+# perfect response: Age, Sex, MaritalStatus, 
+## FamilySize, FamilyType, GovtRegion, YoungestChild, FamilyToddlers
+# recoded responses: HoursWorked/GrossPay/NetPay '-7'; YoungestChild '-6'
+attributes(qlfs$HoursWorked)
+attributes(qlfs$GrossPay)
+attributes(qlfs$NetPay)
+attributes(qlfs$YoungestChild)
+tally(~TravelMode, data=qlfs, format="percent", margin="joint")
+```
+
+# Univariate Description
+## `Religion`
+```{r, eval=FALSE, "describe_religion", echo=T, results='hide'}
+# examine Religion
+str(qlfs$Religion)
+unique(qlfs$Religion)
+mode(qlfs$Religion)
+religion_df <- tally(~Religion, data=qlfs, format = "count", margin = "joint")
+religion_df["Christian",1]
+
+```
+
+```{r, eval=FALSE, "religion_iod", echo=T, results='hide'}
+proportion.misclassified(qlfs$Religion)
+```
+
+## `Age`
+```{r, eval=FALSE, "describe_age", echo=T, results='hide'}
+str(qlfs$Age)
+summary(qlfs$Age)
+mode(qlfs$Age)
+skew(qlfs$Age) 
+var(qlfs$Age)
+std.dev(qlfs$Age)
+tally(~ AgeGroup, data=qlfs)
+```
+
+# Missing Data
+```{r, eval=FALSE, "ni_missing", echo=T, results='hide'}
+# no 'religion' responses from N.I.
+summary(qlfs$GovtRegion)
+religion_df["Muslim",1]
+religion.by.region <- tally(Religion~GovtRegion, data=qlfs)
+religion.by.region[,"Northern Ireland"]
+
+# restrict analysis to britain
+britain <- subset(qlfs, GovtRegion!="Northern Ireland")
+britain
+
+# check
+region_df <- tally(~GovtRegion, data=qlfs, format = "count", margin = "joint")
+region_df
+dim(qlfs)[1] - dim(britain)[1] - region_df["Northern Ireland",1]
+```
+
+# Recoding
+```{r, eval=FALSE, "age_deciles", echo=T, results='hide'}
+# recode age into deciles
+groups <- 10
+seq(from= 0, to= 1, by= 1/groups)
+cumulative_proportions <- seq(from= 0, to= 1, by= 1/groups)
+breaks <- quantile( britain$Age, probs=cumulative_proportions , na.rm=FALSE )
+britain$AgeDecile <- group.data(britain$Age, breaks= breaks)
+levels(britain$AgeDecile)[10] <- "71+" # Reflect the fact that "99" actually means "99+"
+tally( ~ AgeDecile, data= britain, format="count", margin="col")
+summary(britain$ReligiousCategories)
+```
+
+
+```{r, eval=FALSE, "recode_religion", echo=T, results='hide'}
+# recode Religion
+## keep original responses about 'Religion' as 'ReligiousCategories'
+britain$ReligiousCategories <- britain$Religion
+by_religion <- levels(britain$ReligiousCategories)
+
+## also recode as No Religion/Religious, including NA as 'No Religion'
+religious <- c("Religious", "Not Religious", "Invalid Response")
+britain$Religion <- recode(britain$ReligiousCategories,
+                         "by_religion[1]=religious[2];
+                         by_religion[c(2,3,4,5,6,7,8)]=religious[1];
+                        NA=religious[3]",
+                         levels = c(religious)
+                         )
+tally(~Religion, data=britain, format="percent", margin="col")
+proportion.misclassified(qlfs$Religion)
+```
+
+# Reweighting
+```{r, eval=FALSE, "reweighting", echo=T, results='hide'}
+valid.response <- subset(britain, britain$Religion!="Invalid Response")
+valid.count <- tally(~AgeDecile, data=valid.response, format="count", margin="col")
+valid.count
+total.valid <- valid.count["Total",]
+true.count <- tally(~AgeDecile, data=britain, format="count", margin="col")
+
+df <- data.frame( 
+                  AgeDecile = c( levels(britain$AgeDecile), "Total"),
+                  Valid=    as.vector( valid.count ),
+                  True=     as.vector( true.count )
+                )
+df$Weight <- df$True / df$Valid
+
+valid.response <- merge(valid.response, df[ , c("AgeDecile", "Weight") ],
+                        by="AgeDecile")
+valid.response<- valid.response[order(valid.response$Case_ID), ]
+britain <- valid.response
+tally(Weight ~ AgeDecile, data=britain)
+df
+tally(~ AgeDecile, data=britain, margin="col", weights="Weight")
+true.count
+britain$Religion <- recode(britain$Religion,
+                         "by_religion[1]=religious[2];
+                         by_religion[c(2,3,4,5,6,7,8)]=religious[1];
+                         by_religion[3]=religious[2]",
+                         levels = c("Religious", "Not Religious")
+                         )
+tally(~Religion, data=britain, format="count",margin="joint", weights="Weight")
+levels(britain$Religion)
+```
+
+
+
+# Results
+```{r, eval=FALSE, "table", echo=T, results='hide'}
+# table
+religion_by_age <- tally(AgeDecile ~ Religion, data=britain, 
+                         format="percent", margin="row", weights="Weight")
+total <-tally(AgeDecile ~ Religion, data=britain, 
+              format="count", margin="row", weights="Weight")
+total.pct <- tally(AgeDecile~Religion, data=britain, 
+                   format="percent", margin="joint", weights="Weight")
+total.count <- tally(AgeDecile~Religion, data=britain, 
+                     format="count", margin="joint", weights="Weight")
+decile.labels <- labels(religion_by_age[,1])
+religion_by_age[,"Total"] <- total[,"Total"]
+frame <- cbind(decile.labels,religion_by_age)
+summary_row <- c("Total", total.pct["Total","Religious"]
+, total.pct["Total","Not Religious"]
+, total.count["Total","Total"])
+frame[,1:4]
+reframed <- rbind(frame,summary_row)
+new_column_labels <- c("Age Deciles", "Religious (%)", 
+                       "Not Religious (%)", "Total Number")
+kable(reframed, col.names=new_column_labels, row.names=FALSE, 
+      caption = "British Religiosity by Age Decile", 
+      longtable = FALSE, booktabs = TRUE, format = "latex") 
+      %>% row_spec(10, hline_after=T)  
+      %>% footnote(general = 
+      "Calculations based on the Quarterly Labour Force Survey 2012.",
+      general_title="Source:", fixed_small_size = TRUE, threeparttable = TRUE)
+
+```
+
+
+```{r, eval=FALSE, "visualization_1", echo=T, results='hide'}
+religion.pct.table <- tally(~Religion, data=britain, 
+                            format="percent", margin="col", weights="Weight")
+total.pct.not <- religion.pct.table["Not Religious",]/100
+
+ggplot(data=britain) +
+  geom_bar( aes(x=AgeDecile, fill=Religion), position="fill") +  
+  geom_hline(yintercept = total.pct.not, colour="black", linetype="dashed") +
+    geom_hline(yintercept = 0.5, colour="grey", linetype="dashed") +
+  scale_y_continuous(labels=percent, 
+                     position="left",
+                     breaks = c(0.0, 0.3219, 0.5, 1.0),
+                     sec.axis = dup_axis()) +
+  scale_x_discrete(labels=decile.labels) +
+  xlab("Age Decile") +
+  ylab("Not Religious                  Religious     ") +
+  scale_fill_brewer(palette = "Greys") +
+  theme(axis.text.x = element_text(angle = 335, 
+                                   hjust = 0, 
+                                   family="serif",
+                                   size=8), 
+        axis.title = element_text(family="serif", size=10),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text.x.top = element_blank(), 
+        axis.text.y.left = element_blank(),
+        axis.title.x.bottom = element_blank(), 
+        axis.title.y.right = element_blank(),
+        legend.position = "none")
+
+
+```
+
+
+# Confidence Intervals
+```{r, eval=FALSE, "confidence_intervals", echo=T, results='hide'}
+pct_age_religion <- tally(AgeDecile ~ Religion, data=britain, 
+                          format="percent", margin="row", na.rm=TRUE, weights="Weight")
+count_age_religion <- tally(AgeDecile ~ Religion, data=britain, 
+                          format="count", margin="row", na.rm=TRUE, weights="Weight")
+pct.religious <- pct_age_religion[, "Religious"]
+pct.not_religious <- pct_age_religion[, "Not Religious"]
+denominator <- count_age_religion[, "Total"]
+religious.std.error <- ( (pct.religious * (100 - pct.religious) ) / denominator)^0.5
+religious.lower.bound <- pct.religious - 1.96*religious.std.error
+religious.upper.bound <- pct.religious + 1.96*religious.std.error
+non.std.error <- ( (pct.not_religious * (100 - pct.not_religious) ) / denominator)^0.5
+non.lower.bound <- pct.not_religious - 1.96 * non.std.error
+non.upper.bound <- pct.not_religious + 1.96 * non.std.error
+df <- data.frame(pct.religious, religious.std.error, religious.lower.bound, religious.upper.bound)
+df$AgeDecile <- rownames(df)
+
+ggplot(data=df) +
+  geom_point( aes(x=AgeDecile, 
+                  y=pct.religious/100), 
+              colour="black",
+              fill="white",
+              shape=4, 
+              size=1) +
+  geom_point( aes(x=AgeDecile, 
+                  y=pct.not_religious/100), 
+              colour="grey", 
+              fill="grey",
+              shape=4, 
+              size=1) + 
+  geom_segment( aes(x=AgeDecile, xend=AgeDecile,
+                    y=religious.lower.bound/100,
+                    yend=religious.upper.bound/100) ) +
+  geom_segment( aes(x=AgeDecile, 
+                    xend=AgeDecile,
+                    y=non.lower.bound/100, 
+                    yend=non.upper.bound/100), colour="grey") +
+  geom_hline(yintercept = 0.50, 
+             colour="grey", 
+             linetype="dashed") +
+  scale_y_continuous(labels=percent, 
+                     breaks = c(0.25,0.50,0.75),
+                     position="left", 
+                     sec.axis = dup_axis()) +
+  scale_x_discrete(labels=decile.labels) +
+  xlab("Age Decile") +
+  ylab("Not Religious                  Religious     ") +
+  theme(axis.text.x = element_text(angle = 335, 
+                                   hjust = 0, 
+                                   family="serif",
+                                   size=8), 
+        axis.title = element_text(family="serif", size=10),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text.x.top = element_blank(), 
+        axis.text.y.left = element_blank(),
+        axis.title.y.right = element_blank(),
+        legend.position = "none",
+        panel.border = element_rect(colour = "black", 
+                                    fill = NA)
+  )
+
+```
+
+# Adding `Sex` to the Analysis
+## Univariate Description
+
+```{r, eval=FALSE, "describe_sex", echo=T, results='hide'}
+
+tally_sex<- tally(AgeDecile~Sex, data=britain, 
+                  format="percent", margin="col", weights="Weight")
+women <- subset(britain, Sex=="Female")
+men <- subset(britain, Sex=="Male")
+mean(women$Age)/mean(men$Age)
+
+```
+
+
+```{r, eval=FALSE, "table2", echo=T, results='hide'}
+# table2
+religion_by_sex <- tally(Religion ~ Sex, data=britain, 
+                         format="percent", margin="row", weights="Weight")
+total <-tally(Religion ~ Sex, data=britain, 
+              format="count", margin="row", weights="Weight")
+total.pct <- tally(Religion ~ Sex, data=britain, 
+                   format="percent", margin="joint", weights="Weight")
+total.count <- tally(Religion ~ Sex, data=britain, 
+                     format="count", margin="joint", weights="Weight")
+religion_by_sex[,"Total"] <- total[,"Total"]
+rel_labels <- labels(religion_by_sex[,1])
+religion_by_sex[,"Total"] <- total[,"Total"]
+frame <- cbind(rel_labels, religion_by_sex)
+summary_row <- c("Total", total.pct["Total", "Male"], 
+                 total.pct["Total","Female"], total.count["Total","Total"])
+reframed <- rbind(frame,summary_row)
+new_column_labels <- c("", "Male (%)", "Female (%)", "Total Number")
+kable(reframed, col.names=new_column_labels, 
+      row.names=FALSE, caption = "Religiosity by Sex", 
+      longtable = FALSE, booktabs = TRUE, format = "latex") 
+      %>% row_spec(2, hline_after=T) %>%
+      footnote(general = "Quarterly Labour Force Survey 2012.",
+          general_title="Source:", fixed_small_size = TRUE, threeparttable = TRUE)
+
+```
+
+
+```{r, eval=FALSE, "consider_sex", echo=T, results='hide'}
+
+# devtools::install_github("haleyjeppson/ggmosaic")
+library(ggmosaic)
+ggplot(data=britain) +
+  geom_mosaic(aes(x = product(Sex), fill = Religion), 
+              colour = "black", size = .3) +
+  scale_fill_brewer(palette = "Greys") +
+  theme(axis.text.x = element_text(family="serif",
+                                   size=10), 
+        axis.text.y = element_text(angle=90,
+                                   hjust=0.6,
+                                   family="serif", 
+                                   size=10),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title.x.bottom = element_blank(),
+        axis.title.y.left = element_blank(),
+        legend.position = "none"
+  )
+
+
+```
+
+# \( \chi^2 \) Test
+```{r, eval=FALSE, "chi_squared", echo=T, results='hide'}
+table <- tally(Sex ~ Religion, data=britain, weights="Weight")
+tally(Sex ~ Religion, data=britain, format="percent", 
+      margin="col", weights="Weight")
+chi_squared_test <- chisq.test(table)
+chi_squared_test
+```
+
+# Graphical Representation of Three Variables
+```{r, eval=FALSE, "sex_vs_age", echo=T, results='hide'}
+
+ggplot(data=britain) +
+  geom_boxplot(color="black", varwidth=TRUE, 
+               aes(x=Religion, y=Age, fill=Sex), 
+               ymin=16, outlier.alpha = 0.1) +
+    scale_fill_brewer(palette = "Greys") +
+    theme(axis.text.x = element_text(family="serif",
+                                   size=8), 
+        axis.text.y = element_text(family="serif", size=8),
+        axis.title.x = element_blank(),
+        panel.border = element_rect(colour = "black", 
+                                    fill = NA))
+
+```
+
+
